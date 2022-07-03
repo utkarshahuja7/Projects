@@ -1,0 +1,669 @@
+---
+title: "Retail forecasting project"
+author: "Utkarsh Ahuja"
+date: '2022-05-17'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+library(fpp3)
+library(readabs)
+library(kableExtra)
+library(fabletools)
+```
+
+
+# Introduction
+
+This report comprises of forecasting of the retail data obtained from the ABS website (Cat. 8501.0, Table 11) of the states of Australia. We have created and selected models using the most widely approaches to time series forecasting - ETS and ARIMA forecasting methods. These models are used to forecast the future data in the presence of the original data set.
+
+Later, the accuracy statistics of these models are examined and through plots, the fit of the models are examined by fitting them on the original data to compare the computed predictions.
+
+
+# About the data
+
+Using `set.seed`, a series is randomly selected for a specific duration and in my case, it's the Cafes, restaurants and catering services industry for the state of Queensland, Australia. It is of class`tsibble` and it comprises of 441 observations and 5 variables. The variables are:
+
+- State: Queensland, Australia (Key variable)
+
+- Industry:  Cafes, restaurants and catering services (Key variable)
+
+- Series ID: A3349481R
+
+- Turnover ($ Million AUD)
+
+
+```{r}
+# Use your student ID as the seed
+set.seed(31272223)
+myseries <- aus_retail %>%
+  # Remove discontinued series
+  filter(!(`Series ID` %in% c("A3349561R","A3349883F","A3349499L","A3349902A",
+                        "A3349588R","A3349763L","A3349372C","A3349450X",
+                        "A3349679W","A3349378T","A3349767W","A3349451A"))) %>%
+  # Select a series at random
+  filter(`Series ID` == sample(`Series ID`,1)) 
+
+```
+
+
+**A discussion of the statistical features of the original data.**
+
+
+```{r}
+
+myseries %>% 
+  autoplot(Turnover) + 
+  labs(y = "Turnover ($ Million AUD)",
+       title = myseries$Industry[1],
+       subtitle = myseries$State) + 
+    theme_minimal() +
+  theme(plot.title = element_text(face="bold"), plot.subtitle = element_text(face="bold")) 
+
+
+```
+
+
+> The time plot above represents the change in turnover for the cafes, restaurants, and catering services industry in Queensland over time. A rising trend can be seen, combined with a stronger seasonal pattern that grows in magnitude as the series level rises. The amount of turnover fluctuates as the trend progresses upwards, and these large fluctuations in the industry can be seen after 2004.
+
+
+
+```{r}
+myseries %>% gg_season(Turnover, labels = "both") + 
+  labs(title = "Seasonal plot: Cafes, restaurants and catering service", subtitle = myseries$State ,y=" Turnover ($ Million AUD)") +
+  theme_minimal() +
+  theme(plot.title = element_text(face="bold"), plot.subtitle = element_text(face="bold"))
+```
+
+
+> The graph above is a seasonal plot that depicts the monthly turnover for Queensland's cafes, restaurants, and catering services industry. As shown above, the data from each season is overlapping, and this plot helps the individual in recognising years when the pattern changes. The graph above shows that there was not much change in the industry's turnover before the year 2000. Furthermore, the demand for this business is high in January and December due to weather and holidays, and it is clear that the industry's turnover increases in March and July and decreases in February, June and November each year. 
+
+
+
+
+```{r}
+
+myseries %>% gg_subseries(Turnover) + 
+  labs(title = "Sub-series plot: Cafes, restaurants and catering services ", subtitle = myseries$State ,y= "Turnover ($ Million AUD)") +
+  theme(plot.title = element_text(face="bold"), plot.subtitle = element_text(face="bold"))
+```
+
+
+> The graph above is a seasonal subseries plot of the monthly turnover for Queensland's cafes, restaurants, and catering services industry. The blue lines in the mini time graphs represent the monthly mean. These plots show that the turnover for this industry is highest in the months of January, July, and December due to weather and holidays. Except for February, the turnover is quite consistent throughout the remaining months.
+
+
+
+```{r}
+
+myseries %>%
+  gg_tsdisplay(Turnover, plot_type = "partial") + 
+  labs(title = "Time Series plot wih ACF and PACF: Cafes, restaurants and catering services", subtitle = myseries$State ,y= "Turnover ($ Million AUD)") 
+
+
+```
+
+
+> As we can see in the ACF plot above, it can be observed that there is some seasonality in the data.  
+
+
+**Explanation of transformations and differencing used. You should use a unit-root test as part of the discussion.**
+
+```{r, warning=FALSE}
+
+lambda_value <- myseries %>%
+  features(Turnover, features = guerrero) %>%
+  pull(lambda_guerrero)
+
+myseries %>%
+  autoplot(box_cox(Turnover,lambda_value)) +
+ labs(title = "Transformed Cafes, restaurants and catering services industry turnover", y = "Box-Cox transformed turnover") + 
+  theme_minimal() + 
+  theme(plot.title = element_text(face="bold"))
+
+
+myseries %>%
+  gg_tsdisplay(box_cox(Turnover, lambda_value),
+               plot_type = "partial") +
+   labs(title = "Box-cox transformation: Cafes, restaurants and catering services industry turnover", y = "Box-Cox transformed turnover")
+```
+
+
+> We investigate data transformation to simplify the patterns in the original data by eliminating known causes of variance or making the pattern more consistent throughout the entire data set. Because the volatility in this data set grows over time, a box cox transformation was applied to ensure consistency. The value of lambda is computed using the  guerrero method, 0.1772160 and the plot computed using `gg_tsdisplay()` shows that the variation is more consistent in comparison to the previous plot.
+
+
+
+```{r}
+# Unit-root test
+
+ myseries %>%
+  features(box_cox(Turnover, lambda_value), features = list(unitroot_kpss, unitroot_ndiffs, unitroot_nsdiffs)) %>%
+    kableExtra::kable(caption ="Unit root test") %>%
+  kableExtra::kable_styling()
+
+```
+
+
+> After box-cox transformation, the variation became more consistent, however, regular differencing needs to be done since the data is non-stationary. 
+
+
+```{r}
+
+# Regular differencing
+
+ndiffs <- myseries %>%
+  features(box_cox(Turnover, lambda_value), features = (unitroot_ndiffs)) %>%
+  pull(ndiffs)
+
+myseries %>%
+gg_tsdisplay(box_cox(Turnover, lambda_value) %>% difference(12, ndiffs), plot_type = "partial") +
+   labs(title = "Regular Differencing on the transformed retail data", y = "difference(box_cox())")
+  
+```
+
+
+> The differencing makes the data stationary, however it still has some seasonality. As a result, seasonal differencing is required to eliminate it.
+
+
+
+```{r}
+# Seasonal differencing
+
+nsdiffs <- myseries %>%
+  features(box_cox(Turnover, lambda_value), features = unitroot_nsdiffs) %>%
+  pull(nsdiffs)
+
+myseries %>%
+ gg_tsdisplay(box_cox(Turnover, lambda_value) %>% difference(12,ndiffs) %>% difference(1,nsdiffs), plot_type = "partial") +
+  labs(title = "Seasonal Differencing on the transformed retail data", y = "difference(box_cox())")
+
+```
+
+> After adding seasonal differencing, it is clearly noticable that the seasonality component has been removed and the data is stationary as well.
+
+
+```{r}
+myseries %>% features(difference(box_cox(Turnover, lambda_value)) %>% difference(12,ndiffs) %>% difference(1,nsdiffs), 
+                      features = list(unitroot_kpss, unitroot_ndiffs, unitroot_nsdiffs)) %>%
+    kableExtra::kable(caption ="Unit root test after transformations and differencing") %>%
+  kableExtra::kable_styling()
+
+```
+
+
+> As we can see in the table above that the data is stationary and there is no need for regular (ndiffs) or seasonal differencing (nsdiffs). 
+
+
+# ARIMA models and ETS models.
+
+**A description of the methodology used to create a short-list of appropriate ARIMA models and ETS models. Include discussion of AIC values as well as results from applying the models to a test-set consisting of the last 24 months of the data provided.**
+
+```{r}
+# Computing training and test set from the retail data.
+
+training_set <- myseries %>%
+  filter(yearmonth(Month) < yearmonth("2016 Dec"))
+
+test_set <- myseries %>%
+   filter(yearmonth(Month) > yearmonth("2016 Dec"))
+
+```
+
+
+# ETS Model
+
+```{r}
+
+fit <- myseries %>% 
+  model(ets = ETS(Turnover))
+
+fit %>% 
+  report() %>%
+  accuracy() 
+ 
+
+glance(fit) %>%
+   kableExtra::kable(caption = "Auto ETS Model stats") %>%
+  kableExtra:: kable_styling()
+
+
+```
+
+> The forecast package's `ETS()` function can be used to estimate a model. It calculates model parameters and returns data about the fitted model. The AICc is used by default to identify a suitable model, although additional information criteria can be used. Also, `accuracy()`(AICc) and `glance()`(RMSE) functions return the statstics for the ets model generated. 
+
+> A suitable model is identified on the basis of the lowest AICc value. In this case, the auto`ETS()` function selected a model with the AICc value of 4521.274. 
+
+
+```{r}
+fit1 <- training_set %>%
+    model(
+    MAM = ETS(Turnover ~ error("M") + trend("A") + season("M")),
+    MNM = ETS(Turnover ~ error("M") + trend("N") + season("M")),
+    MAdm = ETS(Turnover ~ error("M") + trend("Ad") + season("M")),
+  )
+
+fit1 %>% 
+  report() %>%
+  arrange(AICc) %>% 
+  kableExtra::kable(caption = "ETS Models stats") %>%
+  kableExtra:: kable_styling()
+
+```
+
+
+> In the above table, I have generated three models which might be a good fit for my data set. When comparing the three models, the MAM model has the lowest AICc value of 4207.671 and would be the best choice for my data in comparison to the others. Therefore, my selected ETS model is the MAM model with the AICc value of 4207.671. 
+
+
+```{r}
+fit1 %>%
+  forecast(h = 24) %>%
+  accuracy(myseries)  %>%
+  kableExtra::kable(caption ="ETS model accuracy stats for the selected model") %>%
+  kableExtra::kable_styling()
+
+```
+
+> Using the `accuracy()` function, we can compute the accuracy statistics for the ETS model and further examine whether the chosen model is a good or not. We can either look at the RMSE or MASE values, and lower the value of either, better the fit of the selected model. 
+
+> According to the table above, the MAdm model is the best choice with the lowest RMSE value of 32.27249 but with a higher AICc value of 4210.013. I'll be choosing my model on the basis of the lowest AICc value, therefore, my selected model is MAM.
+
+
+# ARIMA Model
+
+```{r}
+
+fit2 <- training_set %>%
+    model(
+    auto_ARIMA =ARIMA(box_cox(Turnover, lambda_value) ~ pdq(d = 1) + PDQ(D = 1), stepwise = FALSE, approx = FALSE),
+    ARIMA001011  =ARIMA(box_cox(Turnover, lambda_value) ~ 0 + pdq(0,1,1) + PDQ(0,1,1)),
+    ARIMA210110  =ARIMA(box_cox(Turnover, lambda_value) ~ 0 + pdq(2,1,0) + PDQ(1,1,0)),
+    ARIMA510110  =ARIMA(box_cox(Turnover, lambda_value) ~ 0 + pdq(5,1,0) + PDQ(1,1,0)),
+    ARIMA110210  =ARIMA(box_cox(Turnover, lambda_value) ~ 0 + pdq(1,1,0) + PDQ(2,1,0)),
+    ARIMA210510  =ARIMA(box_cox(Turnover, lambda_value) ~ 0 + pdq(2,1,0) + PDQ(5,1,0))
+  )
+
+fit2 %>%
+  report() %>%
+  arrange(AICc) 
+  
+```
+
+> We look at the ACF and PACFplots from the seasonal differencing plot to determine the ARIMA models for testing. All my models will have regular difference (d) and seasonal difference (D) equal to 1.
+
+>> The auto_ARIMA selected the ARIMA model with lowest AICc value of -383.0352. It gives the value pdq(1,1,1) and the seasonal component PDQ(0,1,1), also the values of d and D of the model were set to 1. 
+
+>> The first chosen model was determined from the ACF plot - ARIMA(0,1,1)(0,1,1)[12], which gives the AICc value of -376.9655.
+
+>> The second chosen model was determined from the PACF plot - ARIMA(2,1,0)(1,1,0)[12], which gives the AICc value of -293.1322.
+
+>> The third chosen model was determined from the PACF plot - ARIMA(5,1,0)(1,1,0)[12], which gives the AICc value of -291.3852.
+
+>> The fourth chosen model was determined from the PACF plot - ARIMA(1,1,0)(2,1,0)[12], which gives the AICc value of -308.3039.
+
+>> The fifth chosen model was determined from the PACF plot - ARIMA(2,1,0)(5,1,0)[12], which gives the AICc value of -356.7906.
+
+
+
+
+```{r}
+
+ fit2 %>%
+  forecast(h = 24)  %>%
+accuracy(myseries) %>%
+  arrange(RMSE) %>%
+   kableExtra::kable(caption ="ARIMA model accuracy stats for the generated models") %>%
+  kableExtra::kable_styling()
+
+
+```
+
+> According to the table above, ARIMA(5,1,0)(1,1,0)[12] is the best choice since it has the lowest RMSE value of 41.17952. However, this model has a really high AICc value of -291.3852. Therefore, I'm going to select the auto_ARIMA model on this basis of it's lowest AICc value in comparison to the other models.
+
+```{r}
+ARIMA_order <- fit2 %>%
+  pivot_longer(3:ncol(fit2),
+               names_to = "Model", 
+               values_to = "Order") %>%
+  select(Model, Order)
+
+ARIMA_order
+
+```
+> The chosen auto_ARIMA model is ARIMA(1,1,1)(0,1,1)[12]. 
+
+# Residual Plots - ETS and ARIMA model
+
+**Choose one ARIMA model and one ETS model based on this analysis and show parameter estimates, residual diagnostics, forecasts and prediction intervals for both models. Diagnostic checking for both models should include ACF graphs and the Ljung-Box test.** 
+
+## ETS Model
+
+```{r}
+fit1 %>% 
+  
+  select(MAM) %>%
+  gg_tsresiduals() %>%
+  labs(title = "Residual plot for the selected ETS model with the ACF and Histogram plot")
+
+```
+
+
+> The plot above shows the residual plot, ACF plot and the histogram for the residuals. The time plot of the residuals shows that the variation of the residuals stays much the same across the historical data, apart from the one outlier, and therefore the residual variance can be treated as constant.This can also be seen on the histogram of the residuals. The tail is longer towards the left, if we don't ignore the outlier. 
+
+
+```{r}
+# ETS Prediction intervals
+
+myseries %>%
+  model(ets = ETS(Turnover)) %>%
+  forecast(h=24) %>%
+  head(1) %>%
+  mutate(interval = hilo(Turnover, 95)) %>%
+  pull(interval)
+
+```
+
+> The computed 95% prediction intervals for the ETS model are [341.3925, 435.1916].
+
+
+```{r}
+selected_ETS <- fit1 %>%
+  select(MAM) %>% report()
+```
+
+
+> The number of coefficients for the selected ETS model is 16 [alpha, beta, gamma, b[0], s[0], s[-1], s[-2], s[-3], s[-4], s[-5], s[-6], s[-7], s[-8], s[-9], s[-10], s[-11]].
+The coefficients can be computed using the `report()` function.
+
+
+
+```{r}
+# Ljung_box test
+
+options(scipen = 999)
+selected_ETS %>% 
+  augment() %>%
+  features(.innov, ljung_box, lag = 24, dof = 16) %>%
+  kableExtra::kable(caption ="Ljung box test on the selected ETS Model") %>%
+  kableExtra::kable_styling()
+  
+```
+
+> The Ljung box test examines the data for stationarity as well as whether or not there is white noise in the model. The Ljung box test yielded a p-value of 0.0000005079513, indicating that there is autocorrelation in the residuals.
+
+
+
+```{r}
+
+ETS_fc <- fit1 %>%
+  forecast(h = 24)
+
+ETS_fc %>%
+  filter(.model == "MAM") %>%
+  autoplot(training_set) + 
+  autolayer(myseries) + 
+  labs(title = "Selected ETS Model fitted on the retail data", y = "Turnover ($ Million AUD)") + 
+  theme_minimal() +
+  theme(plot.title = element_text(face="bold"))
+
+```
+
+> The data is filtered for the last two years, and the model is fit to the original `myseries` retail data as well as the forecasted values from the chosen ETS model (MAM). As shown in the graph above, the model fits the original data quite well, although there is some overestimation as well.
+
+## ARIMA Model
+
+```{r}
+
+fit2 %>% 
+  select(auto_ARIMA) %>%
+  gg_tsresiduals() %>%
+  labs(title = "Residual plot for the selected ARIMA model with the ACF and Histogram plot")
+
+```
+
+> The residual plot, ACF plot, and residual histogram are shown in the plot above. The residual variance may be treated as constant since the variation of the residuals remains relatively consistent over the historical data, with the exception of one outlier. This is also visible in the residuals histogram. The tail is longer towards the left, if we don't ignore the outlier. 
+
+
+
+```{r}
+#  ARIMA prediction intervals
+
+myseries %>%
+  model(arima = ARIMA(box_cox(Turnover, lambda_value), stepwise = FALSE, approx = FALSE)) %>%
+  forecast(h=24) %>%
+  head(1) %>%
+  mutate(interval = hilo(Turnover, 95)) %>%
+  pull(interval)
+
+```
+
+> The computed 95% prediction intervals for the ETS model are [343.6267, 461.7505].
+
+
+
+```{r}
+
+selected_ARIMA <- fit2 %>%
+  select(auto_ARIMA) %>% report()
+
+```
+
+> The number of coefficients for the selected ARIMA model is 3 [ar1, ma1, sma1]. The coefficients can be computed using the `report()` function.
+
+
+```{r}
+
+#Ljung-box test
+
+selected_ARIMA %>% 
+  augment() %>%
+  features(.innov, ljung_box, lag = 24, dof = 3)
+  
+```
+
+> The Ljung box test yielded a p-value of 0.6184518, indicating that the time series isn't autocorrelated and there's white noise in the residuals.
+
+
+```{r}
+
+ARIMA_fc <- fit2 %>%
+  forecast(h = 24)
+
+ARIMA_fc %>%
+  filter(.model == "auto_ARIMA") %>%
+  autoplot(training_set) + 
+  autolayer(myseries)  +
+  labs(title = "Selected ARIMA Model fitted on the retail data", y = "Turnover ($ Million AUD)") + 
+  theme_minimal() +
+  theme(plot.title = element_text(face="bold"))
+
+```
+
+> The data is filtered for the last two years, and the model is fit to the original `myseries` retail data as well as the forecasted values from the chosen ARIMA model. As shown in the graph above, the model fits the original data quite well, although there is some overestimation as well.
+
+
+# Comparison of models
+
+**Comparison of the results from each of your preferred models. Which method do you think gives the better forecasts? Explain with reference to the test-set.**
+
+```{r}
+
+# ETS statistics
+
+fit1 %>% 
+  select("MAM") %>%
+  forecast(h = 24) %>%
+  accuracy(myseries) %>%
+  kableExtra::kable(caption = "ETS Model Accuracy Results") %>%
+  kableExtra:: kable_styling() 
+
+  
+```
+
+> Using the `accuracy()` function, we can compute the accuracy statistics for the ETS model and further examine whether the chosen model is a good or not. We can either look at the RMSE or MASE values, and lower the value of either, better the fit of the selected model. My selected model is MAM with an RMSE value of 45.15342. 
+
+
+```{r}
+
+# ARIMA statistics
+
+fit2 %>% 
+  select("auto_ARIMA") %>%
+  forecast(h = 24) %>%
+  accuracy(myseries) %>%
+  kableExtra::kable(caption = "ARIMA Model Accuracy Results") %>%
+  kableExtra::kable_styling() 
+
+```
+
+> The RMSE value of my chosen ARIMA model is 61.43341. 
+
+```{r}
+
+training_set %>%
+  model(
+    ETS = ETS(Turnover ~ error("M") + trend("A") + season("M")),
+    ARIMA = ARIMA(box_cox(Turnover, lambda_value) ~ 0 + pdq(1,1,1) + PDQ(0,1,1))
+  ) %>%
+  forecast(h = 24) %>%
+  autoplot(myseries, level = 80) +
+  labs(title = "Selected ETS and ARIMA model fitted on the retail data", y = "Turnover ($ Million AUD)") + 
+  theme_minimal() +
+  theme(plot.title = element_text(face="bold"))
+
+```
+
+
+> In the plot above, we use the training data and the selected ETS and ARIMA models to develop a forecast for the following two years [2016 December - 2018 December], and then overlay the entire data over the forecast to test the prediction's accuracy.
+
+> It can be seen in the plot that the ETS model is doing a better job at forecasting the data compared to the ARIMA model.
+
+
+**Apply your two chosen models to the full data set and produce out-of-sample point forecasts and 80% prediction intervals for each model for two years past the end of the data provided.**
+
+```{r}
+
+chosen_models <- myseries %>%
+  model(
+    ARIMA = ARIMA(box_cox(Turnover, lambda_value) ~ 0 + pdq(1,1,1) + PDQ(0,1,1)),
+    ETS = ETS(Turnover ~ error("M") + trend("A") + season("M"))
+  ) 
+```
+
+> From the original data, we will be forecasting for the next two years using the two selected models.
+
+```{r}
+chosen_models_fc <- chosen_models %>%
+  forecast(h = 24) 
+
+
+chosen_models_fc %>%
+  autoplot(level = 80, alpha = 0.7) + 
+   labs(title = "Selected ETS and ARIMA models fitted to the entire data set", y = "Turnover ($ Million AUD)") +
+  theme_minimal() +
+  theme(plot.title = element_text(face="bold"))
+
+```
+
+> The plot above depicts the forecast of the retail data from 2019 Jac - 2020 Dec by the ETS and ARIMA selected models.
+
+
+**Obtain up-to-date data from the ABS website (Cat. 8501.0, Table 11), and compare your forecasts with the actual numbers. How well did you do? [Hint: the readabs package can help in getting the data into R.]**
+
+```{r}
+
+ABS_data <- read_abs("8501.0") %>% filter(series_id =="A3349481R") %>%
+  mutate(State = "Queensland", 
+         Industry = "Cafes, restaurants and catering services",
+         Month = yearmonth(date)) %>%
+  select(State, Industry, series_id, Month, value) %>%
+  as_tsibble(key = c("State", "Industry"), index = "Month") %>%
+  rename("Turnover" = value, "Series ID" = series_id) %>%
+  drop_na()
+
+ABS_data %>%
+  head() %>%
+  kableExtra::kable(caption = "Up-to-date ABS Data set") %>%
+  kableExtra::kable_styling()
+  
+```
+
+
+
+```{r}
+
+myseries %>%
+   model(
+    ETS = ETS(Turnover ~ error("M") + trend("A") + season("M")),
+    ARIMA = ARIMA(box_cox(Turnover, lambda_value)  ~ pdq(1,1,1) + PDQ(0,1,1))) %>%
+  forecast(h = 24) %>%
+  autoplot(ABS_data %>% filter(Month > yearmonth("2017 Dec")), level = 80) +
+  labs(title = "Fitted ETS and ARIMA models on the forecasted data",  y = "Turnover ($ Million AUD)")  +
+  guides(color = guide_legend(title = "Forecast methods")) + 
+  theme_minimal()
+  
+
+```
+
+
+> The plot above compares the forecasts of the chosen models to the actual values for the retail data. The models were applied to the original data to forecast the data for 2019 Jan - 2020 Dec, and the computed values were overlaid over the most recent ABS data to determine the models' accuracy. The black line in the plot represents the original data, the red line represents the chosen ARIMA model, and the blue line represents the chosen ETS model. This graph is forecasted with an 80 percent prediction interval, which implies that the values fall inside the predicted range with an 80 percent accuracy.
+
+> Based on the plot above, I feel that both ARIMA and ETS are doing a good job of forecasting future data (except for the COVID-19 impacted period); however, it is clear that the ARIMA model is outperforming the ETS model after the COVID-19 era.
+
+
+
+```{r}
+
+fc <- myseries %>%
+   model(
+    ETS = ETS(Turnover ~ error("M") + trend("A") + season("M")),
+    ARIMA = ARIMA(box_cox(Turnover, lambda_value) ~ 0 + pdq(1,1,1) + PDQ(0,1,1))
+  ) %>%
+  forecast(h = 24)
+
+fc %>%
+  accuracy(ABS_data) %>%
+   kableExtra::kable(caption = "Chosen models forecast [2019 Jan - 2020 Dec]") %>%
+  kableExtra::kable_styling()
+
+```
+
+> After using the `accuracy()` function, it shows that ETS model has a lower RMSE of 73.90208 compared to the RMSE of 77.22564 for the ARIMA model. However, the fitted models on the forecasted data plot depicts that ARIMA model is doing a better job at predicting the future values than the ETS model.
+
+
+# Benefits and Limitations 
+
+**A discussion of benefits and limitations of the models for your data.**
+
+> Benefits:
+
+- The ETS model estimates the model using the multiplicative Holt-Winters technique with multiplicative errors and seasonality, where the trend is lowered over time and seasonality is factored into future data. This helps in forecasting future data that does not follow the same trend and seasonality.
+
+- Both the models - ETS and ARIMA, take the trends and seasonal component into consideration. 
+
+- A benefit of the ETS model is that a non- stationary data form can be straight away applied to the ETS model without transforming it to a stationary form. 
+
+> Limitation:
+
+- The models couldn't predict the data very well for the year 2020 due to the COVID-19 outbreak. My models have not done a really good job in capturing the data for this period. 
+
+- Although both the models fit the retail data well, but the ETS model failed the ljung box test.
+
+- The forecasting done by the models for the updated ABS data is captured better for ARIMA in the plot. However, the RMSE value for the ETS model is lower than that of ARIMA in the `accuracy()` function. 
+
+
+
+# References
+
+Hao Zhu (2020). kableExtra: Construct Complex Table with 'kable' and Pipe Syntax. R package version 1.2.1. https://CRAN.R-project.org/package=kableExtra
+
+Hyndman, R.J., & Athanasopoulos, G. (2021) Forecasting: principles and practice, 3rd edition, OTexts: Melbourne, Australia. OTexts.com/fpp3.
+
+Mitchell O'Hara-Wild, Rob Hyndman and Earo Wang (2021). fabletools: Core Tools for Packages in the 'fable' Framework. R package version 0.3.2.
+  https://CRAN.R-project.org/package=fabletools
+
+Rob Hyndman (2021). fpp3: Data for "Forecasting: Principles and Practice" (3rd Edition). R package version 0.4.0. https://CRAN.R-project.org/package=fpp3
+
+
+
+
+
