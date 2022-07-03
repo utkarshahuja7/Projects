@@ -1,0 +1,237 @@
+---
+title: "ETC3250/5250 - Project 2022"
+author: Utkarsh Ahuja
+output:
+  html_document:
+    df_print: paged
+---
+
+# **Introduction**
+
+> In this report, we will be examining the data set *Celltype from gene motifs in mouse development*. This report comprises of tables, plots and explanations to grasp a better understanding of the provided data. 
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  eval = FALSE,
+  message = FALSE,
+  warning = FALSE)
+
+library(readr)
+library(dplyr)
+library(kableExtra)
+library(tidyverse)
+library(tidymodels)
+library(randomForest)
+library(ggplot2)
+library(naniar)
+library(spinifex)
+library(ggthemes)
+library(ggridges)
+```
+
+```{r message=FALSE}
+# Read data
+tr <- read_csv("mouse_tr.csv") %>%
+  mutate(celltype = factor(celltype))
+ts <- read_csv("mouse_ts_mask.csv")
+ts_sample<- read_csv(here::here("mouse_ts_samp.csv"))
+
+```
+
+# **Data pre-processing**
+
+
+```{r}
+
+# Count
+tr$celltype %>% plyr::count()
+
+# Plot
+ggplot(tr) + 
+  geom_bar(aes(y = celltype))+
+  ggtitle ("Celltypes")+
+  theme_solarized()
+
+
+```
+
+### Checking for duplicate/missing values
+
+```{r}
+
+pct_miss(tr)
+n_miss(tr)
+
+```
+
+> After running the pct_miss() and n_miss() functions from the naniar package, we can conclude that there are no missing values in the given data set.
+
+### Examining the data set and making necessary changes for modelling
+
+
+```{r}
+# merging data sets to add celltypes to the test set
+ts<- merge(x=ts,y=ts_sample, by="location", all.x = TRUE)
+
+```
+
+> The first step in preparing our data for modelling was to combine the two data sets-ts and ts sample-into the ts data frame, where the celltype column was included along with the location and other fields.
+
+
+### Conversion of labels in the data set
+
+```{r}
+
+# Conversion of the labels for training set
+
+trainData_label <- as.integer(tr$celltype)-1
+
+# setting null value to the column in tr
+
+tr$celltype <- NULL
+
+# Conversion of the labels for test set
+
+testData_label <- as.integer(factor(ts$celltype))-1
+
+# setting null value to the column in ts
+
+ts$celltype <- NULL
+
+```
+
+> Because XGBoost only takes numeric vectors and classes in integer format, they will all begin with 0. As a result, the categorical class "celltype" will be transformed to integer format.
+
+
+### Creation of training and testing data sets for the model
+
+```{r}
+# Creating the training and testing sets for the model
+
+train_data <-  as.matrix(tr[,-1])
+
+test_data <-  as.matrix(ts[,-1])
+
+```
+
+> The training data set is utilised to fit the model, whereas the testing data set is kept for validation purposes. This allows us to validate our model's performance (also known as "hold one out cross-validation").
+
+
+### Creation of the xgb.DMatrix objects
+
+```{r}
+# Creating the xgb.DMatrix objects
+
+dtrain <-  xgb.DMatrix(data=train_data, label= trainData_label)
+dtest <-  xgb.DMatrix(data=test_data, label= testData_label)
+
+
+```
+
+> The training and testing data sets were then turned into xgb.DMatrix objects, which are utilised to fit the XGBoost model and predict future outcomes.
+
+
+# **Summary of important variables**
+
+
+```{r}
+
+options(scipen = 999)
+
+mouse_rf <- randomForest(celltype~.,data=tr[,-1], mtry=778, importance=TRUE,ntree=800)
+
+mouse_rf$importance 
+
+importance(mouse_rf, type = 2)
+
+```
+
+> RandomForest was utilised to analyse the data set and generate the best predictions before applying XGBoost for modelling. The mean decrease accuracy and mean decrease Gini score were used to determine the relevance of the variables for this class. I also examined the Variable Importance Plot to assess the significance of variables, but there was still no concrete evidence to determine which variables are essential and which are not. As a result, all variables were incorporated in the modelling. 
+
+
+# **Model performance**
+
+```{r eval=FALSE}
+
+mouse_rf <- randomForest(celltype~.,data=tr[,-1], mtry=778, importance=TRUE,ntree=800)
+
+
+```
+
+> First, I used the randomForest classification algorithm with the best estimated mtry value of 778 and 800 trees. I was able to outperform the standard randomForest fit accuracy of 0.44/0.43. However, the XGBoost approach produced superior results.
+
+
+```{r eval=FALSE}
+
+# Fitting the xgboost model with cv = 10
+
+mouse_xg <- train(celltype ~., data = tr[,-1],
+                  method= "xgbTree",
+                  trControl= trainControl("cv", number = 10))
+
+```
+
+```{r eval=FALSE}
+# Determining the best tune for the model
+
+mouse_xg$bestTune
+
+```
+
+```{r}
+# Defining the main parameters for the classification
+
+num_class = length(levels(celltype))
+params = list(
+  booster="gbtree",
+  eta=0.3,
+  max_depth=1,
+  gamma=0,
+  subsample=0.75,
+  colsample_bytree=0.8,
+  objective="multi:softprob",
+  eval_metric="mlogloss",
+  num_class = num_class
+)
+
+```
+
+```{r}
+# Training the model for classification
+
+dfit <- xgb.train(
+  params=params,
+  data= dtrain,
+  nrounds=150,
+  nthreads=1,
+  watchlist=list(train=dtrain, test=dtest),
+  verbose=0
+)
+
+# Examine the model fit
+
+dfit
+
+ 
+```
+
+
+> The best tune was established by fitting the XGBoost algorithm, which was afterwards utilised for a set of parameters that I discovered to be optimum using simple cross-validation. Later, we train the model and predict the likelihood of each observation in test data of being each celltype. 
+
+
+
+# **References**
+
+XGBoost Parameters — xgboost 1.6.1 documentation. (2022). Retrieved 27 May 2022, from https://xgboost.readthedocs.io/en/stable/parameter.html
+
+Sarafian, R. (2022). Tree based models. Retrieved 27 May 2022, from
+https://rstudio-pubs-static.s3.amazonaws.com/408996_debd530b72c844db9be5ef6ef9febc54.html
+
+Kube, D. (2022). XGBoost Multinomial Classification Iris Example in R. Retrieved 27 May 2022, from https://rstudio-pubs-static.s3.amazonaws.com/456044_9c275b0718a64e6286751bb7c60ae42a.html
+
+Malshe, A. (2022). 2.4 XGBoost | Data Analytics Applications. Retrieved 27 May 2022, from https://ashgreat.github.io/analyticsAppBook/xgboost
+
+
+
